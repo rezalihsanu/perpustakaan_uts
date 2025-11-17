@@ -6,12 +6,18 @@ use CodeIgniter\HTTP\Client;
 
 class Book extends BaseController
 {
-    private $apiURL = 'http://localhost:8000/api/books';
+    private $apiURL = 'http://127.0.0.1:8000/api/books';
     private $client;
+    private $timeout = 10; // Timeout dalam detik
 
     public function __construct()
     {
-        $this->client = \Config\Services::curlrequest();
+        // Konfigurasi cURL request dengan timeout dan verify SSL
+        $this->client = \Config\Services::curlrequest([
+            'timeout' => $this->timeout,
+            'verify' => false,  // Disable SSL verification untuk localhost
+            'connect_timeout' => 5 // Connection timeout
+        ]);
     }
 
     /**
@@ -20,21 +26,42 @@ class Book extends BaseController
     public function index()
     {
         try {
-            $response = $this->client->get($this->apiURL);
-            $data = json_decode($response->getBody(), true);
+            log_message('info', 'Fetching books from API: ' . $this->apiURL);
+            
+            $response = $this->client->get($this->apiURL, [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json'
+                ]
+            ]);
+            
+            $statusCode = $response->getStatusCode();
+            $body = $response->getBody();
+            
+            log_message('info', 'API Response Status: ' . $statusCode);
+            log_message('info', 'API Response: ' . substr($body, 0, 200));
+            
+            if ($statusCode !== 200) {
+                throw new \Exception("API returned status code: $statusCode");
+            }
+            
+            $data = json_decode($body, true);
 
             $viewData = [
                 'title' => 'Daftar Buku',
-                'books' => $data['success'] ? $data['data'] : [],
+                'books' => isset($data['data']) ? $data['data'] : [],
                 'message' => session()->getFlashdata('message')
             ];
 
             return view('books/index', $viewData);
         } catch (\Exception $e) {
+            log_message('error', 'Error in index: ' . $e->getMessage());
+            
             $viewData = [
                 'title' => 'Daftar Buku',
                 'books' => [],
-                'error' => 'Gagal terhubung ke API: ' . $e->getMessage()
+                'error' => 'Gagal terhubung ke API: ' . $e->getMessage() . 
+                           ' | Pastikan Laravel server berjalan di http://127.0.0.1:8000'
             ];
 
             return view('books/index', $viewData);
@@ -86,9 +113,8 @@ class Book extends BaseController
                 'status' => $this->request->getPost('status')
             ];
 
-            // Debug: Log data yang akan dikirim
-            log_message('info', 'Sending data to API: ' . json_encode($postData));
-            log_message('info', 'API URL: ' . $this->apiURL);
+            log_message('info', 'Sending POST to API: ' . $this->apiURL);
+            log_message('info', 'Data: ' . json_encode($postData));
 
             $response = $this->client->post($this->apiURL, [
                 'headers' => [
@@ -96,23 +122,14 @@ class Book extends BaseController
                     'Accept' => 'application/json'
                 ],
                 'json' => $postData,
-                'http_errors' => false, // Jangan throw exception pada HTTP error
-                'verify' => false // Disable SSL verification untuk localhost
+                'http_errors' => false
             ]);
 
             $statusCode = $response->getStatusCode();
             $responseBody = $response->getBody();
             
-            // Debug: Log response
             log_message('info', 'API Response Status: ' . $statusCode);
-            log_message('info', 'API Response Body: ' . $responseBody);
-
-            if ($statusCode === 404) {
-                return redirect()->back()->withInput()->with('message', [
-                    'type' => 'danger',
-                    'text' => 'Backend API tidak ditemukan. Pastikan Laravel berjalan di http://localhost:8000'
-                ]);
-            }
+            log_message('info', 'API Response Body: ' . substr($responseBody, 0, 500));
 
             $result = json_decode($responseBody, true);
 
@@ -128,7 +145,7 @@ class Book extends BaseController
                 }
                 return redirect()->back()->withInput()->with('message', [
                     'type' => 'danger',
-                    'text' => $errorMsg
+                    'text' => 'Error ' . $statusCode . ': ' . $errorMsg
                 ]);
             }
         } catch (\Exception $e) {
@@ -146,10 +163,24 @@ class Book extends BaseController
     public function edit($id)
     {
         try {
-            $response = $this->client->get($this->apiURL . '/' . $id);
+            log_message('info', 'Fetching book with ID: ' . $id);
+            
+            $response = $this->client->get($this->apiURL . '/' . $id, [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json'
+                ]
+            ]);
+            
+            $statusCode = $response->getStatusCode();
+            
+            if ($statusCode !== 200) {
+                throw new \Exception("API returned status code: $statusCode");
+            }
+            
             $result = json_decode($response->getBody(), true);
 
-            if (!$result['success']) {
+            if (!isset($result['success']) || !$result['success']) {
                 return redirect()->to('/book')->with('message', [
                     'type' => 'danger',
                     'text' => 'Buku tidak ditemukan'
@@ -164,6 +195,7 @@ class Book extends BaseController
 
             return view('books/edit', $data);
         } catch (\Exception $e) {
+            log_message('error', 'Error in edit: ' . $e->getMessage());
             return redirect()->to('/book')->with('message', [
                 'type' => 'danger',
                 'text' => 'Gagal mengambil data buku: ' . $e->getMessage()
@@ -203,27 +235,39 @@ class Book extends BaseController
                 'status' => $this->request->getPost('status')
             ];
 
+            log_message('info', 'Sending PUT to API: ' . $this->apiURL . '/' . $id);
+            log_message('info', 'Data: ' . json_encode($postData));
+
             $response = $this->client->put($this->apiURL . '/' . $id, [
                 'headers' => [
-                    'Content-Type' => 'application/json'
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json'
                 ],
-                'json' => $postData
+                'json' => $postData,
+                'http_errors' => false
             ]);
 
-            $result = json_decode($response->getBody(), true);
+            $statusCode = $response->getStatusCode();
+            $responseBody = $response->getBody();
+            
+            log_message('info', 'API Response Status: ' . $statusCode);
 
-            if ($result['success']) {
+            $result = json_decode($responseBody, true);
+
+            if ($statusCode >= 200 && $statusCode < 300 && isset($result['success']) && $result['success']) {
                 return redirect()->to('/book')->with('message', [
                     'type' => 'success',
                     'text' => 'Buku berhasil diperbarui!'
                 ]);
             } else {
+                $errorMsg = isset($result['message']) ? $result['message'] : 'Gagal memperbarui buku';
                 return redirect()->back()->withInput()->with('message', [
                     'type' => 'danger',
-                    'text' => $result['message']
+                    'text' => 'Error ' . $statusCode . ': ' . $errorMsg
                 ]);
             }
         } catch (\Exception $e) {
+            log_message('error', 'Exception in update: ' . $e->getMessage());
             return redirect()->back()->withInput()->with('message', [
                 'type' => 'danger',
                 'text' => 'Gagal memperbarui buku: ' . $e->getMessage()
@@ -237,21 +281,37 @@ class Book extends BaseController
     public function delete($id)
     {
         try {
-            $response = $this->client->delete($this->apiURL . '/' . $id);
-            $result = json_decode($response->getBody(), true);
+            log_message('info', 'Sending DELETE to API: ' . $this->apiURL . '/' . $id);
+            
+            $response = $this->client->delete($this->apiURL . '/' . $id, [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json'
+                ],
+                'http_errors' => false
+            ]);
 
-            if ($result['success']) {
+            $statusCode = $response->getStatusCode();
+            $responseBody = $response->getBody();
+            
+            log_message('info', 'API Response Status: ' . $statusCode);
+
+            $result = json_decode($responseBody, true);
+
+            if ($statusCode >= 200 && $statusCode < 300 && isset($result['success']) && $result['success']) {
                 return redirect()->to('/book')->with('message', [
                     'type' => 'success',
                     'text' => 'Buku berhasil dihapus!'
                 ]);
             } else {
+                $errorMsg = isset($result['message']) ? $result['message'] : 'Gagal menghapus buku';
                 return redirect()->to('/book')->with('message', [
                     'type' => 'danger',
-                    'text' => $result['message']
+                    'text' => 'Error ' . $statusCode . ': ' . $errorMsg
                 ]);
             }
         } catch (\Exception $e) {
+            log_message('error', 'Exception in delete: ' . $e->getMessage());
             return redirect()->to('/book')->with('message', [
                 'type' => 'danger',
                 'text' => 'Gagal menghapus buku: ' . $e->getMessage()
@@ -265,10 +325,24 @@ class Book extends BaseController
     public function show($id)
     {
         try {
-            $response = $this->client->get($this->apiURL . '/' . $id);
+            log_message('info', 'Fetching book detail with ID: ' . $id);
+            
+            $response = $this->client->get($this->apiURL . '/' . $id, [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json'
+                ]
+            ]);
+            
+            $statusCode = $response->getStatusCode();
+            
+            if ($statusCode !== 200) {
+                throw new \Exception("API returned status code: $statusCode");
+            }
+            
             $result = json_decode($response->getBody(), true);
 
-            if (!$result['success']) {
+            if (!isset($result['success']) || !$result['success']) {
                 return redirect()->to('/book')->with('message', [
                     'type' => 'danger',
                     'text' => 'Buku tidak ditemukan'
@@ -282,6 +356,7 @@ class Book extends BaseController
 
             return view('books/show', $data);
         } catch (\Exception $e) {
+            log_message('error', 'Error in show: ' . $e->getMessage());
             return redirect()->to('/book')->with('message', [
                 'type' => 'danger',
                 'text' => 'Gagal mengambil data buku: ' . $e->getMessage()

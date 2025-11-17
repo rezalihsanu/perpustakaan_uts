@@ -14,9 +14,9 @@ use App\Http\Controllers\Api\BookController;
 |
 */
 
-Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
-    return $request->user();
-});
+// Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
+//     return $request->user();
+// });
 
 // Routes untuk Buku
 Route::get('/books', [BookController::class, 'index']);       // Ambil semua buku
